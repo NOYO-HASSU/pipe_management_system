@@ -1,12 +1,28 @@
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import '../core/colors.dart';
+import '../models/dashboard_data.dart';
 
 class SalesTrendChart extends StatelessWidget {
-  const SalesTrendChart({super.key});
+  final DashboardData data;
+  final String periodLabel;
+
+  const SalesTrendChart({
+    super.key,
+    required this.data,
+    this.periodLabel = 'Monthly',
+  });
 
   @override
   Widget build(BuildContext context) {
+    final points = data.salesTrend;
+    final maxSales = points.isEmpty
+        ? 0.0
+        : points
+              .map((point) => point.sales)
+              .reduce((current, next) => current > next ? current : next);
+    final chartMaxY = maxSales <= 0 ? 1.0 : maxSales * 1.2;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -15,32 +31,28 @@ class SalesTrendChart extends StatelessWidget {
           children: [
             Column(
               crossAxisAlignment: CrossAxisAlignment.start,
-              children: const [
+              children: [
                 Text(
-                  "30-Day Sales Trend",
+                  "$periodLabel Sales Trend",
                   style: TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.bold,
                     color: AppColors.textPrimary,
                   ),
                 ),
-                SizedBox(height: 4),
+                const SizedBox(height: 4),
                 Text(
-                  "Daily performance tracking",
-                  style: TextStyle(
+                  points.isEmpty
+                      ? "No sales recorded for selected period"
+                      : "$periodLabel performance tracking",
+                  style: const TextStyle(
                     fontSize: 11,
                     color: AppColors.textSecondary,
                   ),
                 ),
               ],
             ),
-            Row(
-              children: [
-                _buildLegendItem("Sales", AppColors.primaryDark),
-                const SizedBox(width: 12),
-                _buildLegendItem("Forecast", Colors.grey.shade300),
-              ],
-            ),
+            Row(children: [_buildLegendItem("Sales", AppColors.primaryDark)]),
           ],
         ),
         const SizedBox(height: 20),
@@ -50,7 +62,6 @@ class SalesTrendChart extends StatelessWidget {
               gridData: FlGridData(
                 show: true,
                 drawVerticalLine: false,
-                horizontalInterval: 1,
                 getDrawingHorizontalLine: (value) =>
                     FlLine(color: Colors.grey.shade200, strokeWidth: 1),
               ),
@@ -69,52 +80,44 @@ class SalesTrendChart extends StatelessWidget {
                   sideTitles: SideTitles(
                     showTitles: true,
                     reservedSize: 24,
-                    interval: 1,
+                    interval: 5,
                     getTitlesWidget: (value, meta) {
                       const style = TextStyle(
                         color: AppColors.textSecondary,
                         fontWeight: FontWeight.bold,
                         fontSize: 9,
                       );
-                      Widget text;
-                      switch (value.toInt()) {
-                        case 1:
-                          text = const Text('01 AUG', style: style);
-                          break;
-                        case 4:
-                          text = const Text('10 AUG', style: style);
-                          break;
-                        case 7:
-                          text = const Text('20 AUG', style: style);
-                          break;
-                        case 10:
-                          text = const Text('30 AUG', style: style);
-                          break;
-                        default:
-                          text = const Text('', style: style);
-                          break;
+
+                      final index = value.toInt();
+                      if (index < 0 || index >= points.length) {
+                        return const SizedBox.shrink();
                       }
-                      return SideTitleWidget(meta: meta, child: text);
+
+                      return SideTitleWidget(
+                        meta: meta,
+                        child: Text(
+                          _formatAxisDate(points[index].date),
+                          style: style,
+                        ),
+                      );
                     },
                   ),
                 ),
               ),
               borderData: FlBorderData(show: false),
               minX: 0,
-              maxX: 11,
+              maxX: points.isEmpty ? 1 : (points.length - 1).toDouble(),
               minY: 0,
-              maxY: 6,
+              maxY: chartMaxY,
               lineBarsData: [
                 LineChartBarData(
-                  spots: const [
-                    FlSpot(0, 1.5),
-                    FlSpot(2, 1.3),
-                    FlSpot(4, 2.5),
-                    FlSpot(6, 1.8),
-                    FlSpot(8, 4.5),
-                    FlSpot(10, 2.8),
-                    FlSpot(11, 1.5),
-                  ],
+                  spots: points.isEmpty
+                      ? const [FlSpot(0, 0)]
+                      : List.generate(
+                          points.length,
+                          (index) =>
+                              FlSpot(index.toDouble(), points[index].sales),
+                        ),
                   isCurved: true,
                   color: AppColors.primaryDark,
                   barWidth: 2.5,
@@ -131,6 +134,27 @@ class SalesTrendChart extends StatelessWidget {
         ),
       ],
     );
+  }
+
+  String _formatAxisDate(DateTime date) {
+    const monthNames = [
+      'JAN',
+      'FEB',
+      'MAR',
+      'APR',
+      'MAY',
+      'JUN',
+      'JUL',
+      'AUG',
+      'SEP',
+      'OCT',
+      'NOV',
+      'DEC',
+    ];
+
+    final month = monthNames[date.month - 1];
+    final day = date.day.toString().padLeft(2, '0');
+    return '$day $month';
   }
 
   Widget _buildLegendItem(String label, Color color) {
@@ -156,21 +180,29 @@ class SalesTrendChart extends StatelessWidget {
 }
 
 class TopSellingPipes extends StatelessWidget {
-  const TopSellingPipes({super.key});
+  final List<TopSellingItem> items;
+
+  const TopSellingPipes({super.key, required this.items});
 
   @override
   Widget build(BuildContext context) {
+    final maxUnits = items.isEmpty
+        ? 1
+        : items
+              .map((item) => item.unitsSold)
+              .reduce((current, next) => current > next ? current : next);
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Column(
+            const Column(
               crossAxisAlignment: CrossAxisAlignment.start,
-              children: const [
+              children: [
                 Text(
-                  "Top 5 Best-Selling Pipes",
+                  "Top 5 Best-Selling Products",
                   style: TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.bold,
@@ -179,7 +211,7 @@ class TopSellingPipes extends StatelessWidget {
                 ),
                 SizedBox(height: 4),
                 Text(
-                  "Volume by SKU category",
+                  "Units sold in the last 30 days",
                   style: TextStyle(
                     fontSize: 11,
                     color: AppColors.textSecondary,
@@ -192,35 +224,34 @@ class TopSellingPipes extends StatelessWidget {
         ),
         const SizedBox(height: 20),
         Expanded(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-            children: [
-              _buildProgressRow(
-                "PVC High Pressure 2\"",
-                "1,240 Units",
-                0.95,
-                AppColors.primaryDark,
-              ),
-              _buildProgressRow(
-                "Galvanized Steel 4\"",
-                "980 Units",
-                0.80,
-                AppColors.primaryDark,
-              ),
-              _buildProgressRow(
-                "HDPE Heavy Duty 6\"",
-                "720 Units",
-                0.60,
-                const Color(0xFFC7D2FE),
-              ),
-              _buildProgressRow(
-                "PPR Hot Water 1\"",
-                "510 Units",
-                0.40,
-                const Color(0xFFE0E7FF),
-              ),
-            ],
-          ),
+          child: items.isEmpty
+              ? const Center(
+                  child: Text(
+                    "No product sales yet.",
+                    style: TextStyle(
+                      color: AppColors.textSecondary,
+                      fontSize: 13,
+                    ),
+                  ),
+                )
+              : Column(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  children: List.generate(items.length, (index) {
+                    final item = items[index];
+                    final percentage = maxUnits == 0
+                        ? 0.0
+                        : item.unitsSold / maxUnits;
+
+                    return _buildProgressRow(
+                      item.name,
+                      "${item.unitsSold} Units",
+                      percentage,
+                      index < 2
+                          ? AppColors.primaryDark
+                          : const Color(0xFFC7D2FE),
+                    );
+                  }),
+                ),
         ),
       ],
     );
@@ -238,14 +269,18 @@ class TopSellingPipes extends StatelessWidget {
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Text(
-              title,
-              style: const TextStyle(
-                fontWeight: FontWeight.bold,
-                fontSize: 12,
-                color: AppColors.textPrimary,
+            Expanded(
+              child: Text(
+                title,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 12,
+                  color: AppColors.textPrimary,
+                ),
               ),
             ),
+            const SizedBox(width: 8),
             Text(
               value,
               style: const TextStyle(

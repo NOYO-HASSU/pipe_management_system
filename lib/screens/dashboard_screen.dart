@@ -4,9 +4,19 @@ import 'package:m/widgets/sales_chart.dart';
 import '../blocs/dashboard_cubit.dart';
 import '../core/colors.dart';
 import '../core/responsive.dart';
+import '../models/dashboard_data.dart';
 
-class DashboardScreen extends StatelessWidget {
+enum DashboardRange { daily, weekly, monthly }
+
+class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
+
+  @override
+  State<DashboardScreen> createState() => _DashboardScreenState();
+}
+
+class _DashboardScreenState extends State<DashboardScreen> {
+  DashboardRange _selectedRange = DashboardRange.monthly;
 
   @override
   Widget build(BuildContext context) {
@@ -18,40 +28,57 @@ class DashboardScreen extends StatelessWidget {
           builder: (context, state) {
             if (state is DashboardLoading) {
               return const Center(child: CircularProgressIndicator());
-            } else if (state is DashboardLoaded) {
+            }
+
+            if (state is DashboardLoaded) {
+              final transformedData = _transformForRange(
+                state.data,
+                _selectedRange,
+              );
+
               return Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text(
-                    "Real-time inventory and sales metrics for Alpha Unit.",
-                    style: TextStyle(
-                      color: AppColors.textSecondary,
-                      fontSize: 14,
-                    ),
+                  Row(
+                    children: [
+                      const Expanded(
+                        child: Text(
+                          "Real-time inventory and sales metrics based on your recorded sales.",
+                          style: TextStyle(
+                            color: AppColors.textSecondary,
+                            fontSize: 14,
+                          ),
+                        ),
+                      ),
+                      _RangeToggle(
+                        selectedRange: _selectedRange,
+                        onChanged: (range) {
+                          setState(() {
+                            _selectedRange = range;
+                          });
+                        },
+                      ),
+                    ],
                   ),
                   const SizedBox(height: 16),
-
-                  // Responsive KPI Grid
                   Responsive(
                     mobile: _KpiGrid(
                       crossAxisCount: 1,
                       childAspectRatio: 2.4,
-                      data: state.data,
+                      data: transformedData,
                     ),
                     tablet: _KpiGrid(
                       crossAxisCount: 2,
                       childAspectRatio: 2.2,
-                      data: state.data,
+                      data: transformedData,
                     ),
                     desktop: _KpiGrid(
                       crossAxisCount: 4,
                       childAspectRatio: 1.7,
-                      data: state.data,
+                      data: transformedData,
                     ),
                   ),
                   const SizedBox(height: 16),
-
-                  // Charts Area
                   Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -64,8 +91,10 @@ class DashboardScreen extends StatelessWidget {
                             color: AppColors.cardColor,
                             borderRadius: BorderRadius.circular(12),
                           ),
-                          child:
-                              const SalesTrendChart(), // <-- Replaced Text Placeholder
+                          child: SalesTrendChart(
+                            data: transformedData,
+                            periodLabel: _labelForRange(_selectedRange),
+                          ),
                         ),
                       ),
                       if (Responsive.isDesktop(context))
@@ -80,8 +109,9 @@ class DashboardScreen extends StatelessWidget {
                               color: AppColors.cardColor,
                               borderRadius: BorderRadius.circular(12),
                             ),
-                            child:
-                                const TopSellingPipes(), // <-- Replaced Text Placeholder
+                            child: TopSellingPipes(
+                              items: transformedData.topSellingItems,
+                            ),
                           ),
                         ),
                     ],
@@ -89,8 +119,181 @@ class DashboardScreen extends StatelessWidget {
                 ],
               );
             }
-            return const Text("Error loading data");
+
+            if (state is DashboardError) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    state.message,
+                    style: const TextStyle(color: Colors.red),
+                  ),
+                  const SizedBox(height: 12),
+                  ElevatedButton(
+                    onPressed: () =>
+                        context.read<DashboardCubit>().loadDashboardData(),
+                    child: const Text('Retry'),
+                  ),
+                ],
+              );
+            }
+
+            return const SizedBox.shrink();
           },
+        ),
+      ),
+    );
+  }
+
+  DashboardData _transformForRange(DashboardData source, DashboardRange range) {
+    final sortedTrend = List<DailySalesPoint>.from(source.salesTrend)
+      ..sort((a, b) => a.date.compareTo(b.date));
+
+    if (sortedTrend.isEmpty) {
+      return source;
+    }
+
+    List<DailySalesPoint> trend;
+    switch (range) {
+      case DashboardRange.daily:
+        trend = sortedTrend.length <= 7
+            ? sortedTrend
+            : sortedTrend.sublist(sortedTrend.length - 7);
+        break;
+      case DashboardRange.weekly:
+        trend = _groupByWeek(sortedTrend);
+        break;
+      case DashboardRange.monthly:
+        trend = _groupByMonth(sortedTrend);
+        break;
+    }
+
+    final selectedSales = trend.fold<double>(
+      0,
+      (sum, point) => sum + point.sales,
+    );
+    final baseSales = source.totalSales <= 0 ? 1 : source.totalSales;
+    final salesRatio = (selectedSales / baseSales).clamp(0.0, 10.0).toDouble();
+    final adjustedProfit = source.totalProfit * salesRatio;
+    final adjustedMargin = selectedSales <= 0
+        ? 0.0
+        : (adjustedProfit / selectedSales) * 100;
+    final adjustedTopSelling =
+        source.topSellingItems
+            .map(
+              (item) => TopSellingItem(
+                name: item.name,
+                unitsSold: (item.unitsSold * salesRatio).round(),
+              ),
+            )
+            .toList()
+          ..sort((a, b) => b.unitsSold.compareTo(a.unitsSold));
+
+    return DashboardData(
+      totalSales: selectedSales,
+      salesGrowth: source.salesGrowth,
+      totalProfit: adjustedProfit,
+      profitGrowth: source.profitGrowth,
+      profitMargin: adjustedMargin,
+      inStock: source.inStock,
+      lowStock: source.lowStock,
+      salesTrend: trend,
+      topSellingItems: adjustedTopSelling.take(5).toList(),
+    );
+  }
+
+  List<DailySalesPoint> _groupByWeek(List<DailySalesPoint> points) {
+    final map = <DateTime, double>{};
+    for (final point in points) {
+      final weekStart = point.date.subtract(
+        Duration(days: point.date.weekday - 1),
+      );
+      final key = DateTime(weekStart.year, weekStart.month, weekStart.day);
+      map[key] = (map[key] ?? 0) + point.sales;
+    }
+
+    final grouped =
+        map.entries
+            .map(
+              (entry) => DailySalesPoint(date: entry.key, sales: entry.value),
+            )
+            .toList()
+          ..sort((a, b) => a.date.compareTo(b.date));
+    return grouped;
+  }
+
+  List<DailySalesPoint> _groupByMonth(List<DailySalesPoint> points) {
+    final map = <DateTime, double>{};
+    for (final point in points) {
+      final key = DateTime(point.date.year, point.date.month, 1);
+      map[key] = (map[key] ?? 0) + point.sales;
+    }
+
+    final grouped =
+        map.entries
+            .map(
+              (entry) => DailySalesPoint(date: entry.key, sales: entry.value),
+            )
+            .toList()
+          ..sort((a, b) => a.date.compareTo(b.date));
+    return grouped;
+  }
+
+  String _labelForRange(DashboardRange range) {
+    switch (range) {
+      case DashboardRange.daily:
+        return 'Daily';
+      case DashboardRange.weekly:
+        return 'Weekly';
+      case DashboardRange.monthly:
+        return 'Monthly';
+    }
+  }
+}
+
+class _RangeToggle extends StatelessWidget {
+  final DashboardRange selectedRange;
+  final ValueChanged<DashboardRange> onChanged;
+
+  const _RangeToggle({required this.selectedRange, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: const Color(0xFFE5E7EB)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _toggleButton('Daily', DashboardRange.daily),
+          _toggleButton('Weekly', DashboardRange.weekly),
+          _toggleButton('Monthly', DashboardRange.monthly),
+        ],
+      ),
+    );
+  }
+
+  Widget _toggleButton(String label, DashboardRange value) {
+    final isSelected = selectedRange == value;
+
+    return GestureDetector(
+      onTap: () => onChanged(value),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: isSelected ? AppColors.primaryDark : Colors.transparent,
+          borderRadius: BorderRadius.circular(7),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 11,
+            fontWeight: FontWeight.w600,
+            color: isSelected ? Colors.white : AppColors.textSecondary,
+          ),
         ),
       ),
     );
@@ -100,7 +303,7 @@ class DashboardScreen extends StatelessWidget {
 class _KpiGrid extends StatelessWidget {
   final int crossAxisCount;
   final double childAspectRatio;
-  final Map<String, dynamic> data;
+  final DashboardData data;
 
   const _KpiGrid({
     required this.crossAxisCount,
@@ -120,22 +323,22 @@ class _KpiGrid extends StatelessWidget {
       children: [
         KpiCard(
           title: "TOTAL SALES",
-          value: "PKR ${data['totalSales']}",
-          badge: data['salesGrowth'],
-          isPositive: true,
+          value: "RS ${_formatCurrency(data.totalSales)}",
+          badge: data.salesGrowth,
+          isPositive: !data.salesGrowth.startsWith('-'),
         ),
         KpiCard(
           title: "TOTAL PROFIT",
-          value: "PKR ${data['totalProfit']}",
-          badge: data['profitGrowth'],
-          isPositive: true,
+          value: "RS ${_formatCurrency(data.totalProfit)}",
+          badge: data.profitGrowth,
+          isPositive: !data.profitGrowth.startsWith('-'),
         ),
         Container(
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
             color: const Color(0xFF1F2937),
             borderRadius: BorderRadius.circular(10),
-          ), // Dark card from image
+          ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisAlignment: MainAxisAlignment.center,
@@ -150,7 +353,7 @@ class _KpiGrid extends StatelessWidget {
               ),
               const SizedBox(height: 6),
               Text(
-                "${data['profitMargin']} %",
+                "${data.profitMargin.toStringAsFixed(1)} %",
                 style: const TextStyle(
                   color: Colors.white,
                   fontSize: 22,
@@ -162,17 +365,24 @@ class _KpiGrid extends StatelessWidget {
         ),
         KpiCard(
           title: "IN STOCK",
-          value: data['inStock'],
-          badge: "Low Stock (${data['lowStock']})",
+          value: data.inStock.toString(),
+          badge: "Low Stock (${data.lowStock})",
           isPositive: false,
           suffix: " SKUs",
         ),
       ],
     );
   }
+
+  String _formatCurrency(double value) {
+    final fixed = value.toStringAsFixed(0);
+    return fixed.replaceAllMapped(
+      RegExp(r'\B(?=(\d{3})+(?!\d))'),
+      (match) => ',',
+    );
+  }
 }
 
-// Reusable KPI Card
 class KpiCard extends StatelessWidget {
   final String title;
   final String value;

@@ -20,9 +20,9 @@ class SideMenu extends StatelessWidget {
                   mainAxisAlignment: MainAxisAlignment.center,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: const [
-                    Text("PipeManager", style: TextStyle(color: Colors.black, fontSize: 24, fontWeight: FontWeight.bold)),
+                    Text("M&M Group", style: TextStyle(color: Colors.black, fontSize: 24, fontWeight: FontWeight.bold)),
                     SizedBox(height: 4),
-                    Text("Warehouse Alpha", style: TextStyle(color: Colors.black, fontSize: 12)),
+                    Text("Inventory Management", style: TextStyle(color: Colors.black, fontSize: 12)),
                   ],
                 ),
               ),
@@ -78,15 +78,15 @@ class _DrawerListTile extends StatelessWidget {
         },
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
         horizontalTitleGap: 0.0,
-        leading: Icon(icon, color: isSelected ? Colors.black : Colors.grey, size: 20),
+        leading: Icon(icon, color: isSelected ? Colors.black : Colors.black, size: 20),
         title: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16.0),
           child: Text(
             title,
-            style: TextStyle(color: isSelected ? Colors.black : Colors.grey, fontWeight: isSelected ? FontWeight.bold : FontWeight.normal),
+            style: TextStyle(color: isSelected ? Colors.black : Colors.black, fontWeight: isSelected ? FontWeight.bold : FontWeight.normal),
           ),
         ),
-        tileColor: isSelected ? Colors.black.withOpacity(0.15) : Colors.transparent,
+        tileColor: isSelected ? Colors.black.withValues(alpha: 0.15) : Colors.transparent,
       ),
     );
   }

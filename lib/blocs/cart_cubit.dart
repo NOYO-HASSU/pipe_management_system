@@ -1,16 +1,19 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
+import '../repositories/sales_repository.dart';
 
 class CartItem {
   final Map<String, dynamic> product;
   int quantity;
 
   CartItem({required this.product, this.quantity = 1});
-  
+
   double get totalPrice => product['price'] * quantity;
 }
 
 abstract class CartState {}
+
 class CartLoading extends CartState {}
+
 class CartLoaded extends CartState {
   final List<Map<String, dynamic>> products;
   final List<CartItem> cartItems;
@@ -30,34 +33,56 @@ class CartLoaded extends CartState {
 }
 
 class CartCubit extends Cubit<CartState> {
-  CartCubit() : super(CartLoading());
+  final SalesRepository _salesRepository;
 
-  final List<Map<String, dynamic>> _mockProducts = [
-    {'id': '1', 'name': 'Galvanized Steel Pipe 2"', 'sku': 'GS-200-S40', 'price': 45.00, 'stock': 124, 'stockStatus': 'IN STOCK'},
-    {'id': '2', 'name': 'PVC Schedule 40 - 1.5"', 'sku': 'PVC-150-S40', 'price': 12.50, 'stock': 842, 'stockStatus': 'IN STOCK'},
-    {'id': '3', 'name': 'Copper Tubing Type L - 0.75"', 'sku': 'COP-075-TL', 'price': 89.20, 'stock': 12, 'stockStatus': 'LOW STOCK'},
-    {'id': '4', 'name': 'Seamless Black Pipe 4"', 'sku': 'SBP-400-H', 'price': 156.00, 'stock': 0, 'stockStatus': 'OUT OF STOCK'},
-  ];
+  CartCubit({SalesRepository? salesRepository})
+    : _salesRepository = salesRepository ?? SalesRepository(),
+      super(CartLoading());
 
+  List<Map<String, dynamic>> _products = [];
   List<CartItem> _cartItems = [];
 
-  void loadPosData() async {
+  Future<void> loadPosData() async {
     emit(CartLoading());
-    await Future.delayed(const Duration(milliseconds: 400));
-    
-    // Initial mock cart state based on the image
-    _cartItems = [
-      CartItem(product: _mockProducts[0], quantity: 10),
-      CartItem(product: _mockProducts[1], quantity: 50),
-      CartItem(product: _mockProducts[2], quantity: 2),
-    ];
+    _products = await _salesRepository.fetchPosProducts();
+    _cartItems = [];
+    _emitUpdate();
+  }
+
+  void addToCart(Map<String, dynamic> product) {
+    final stock = product['stock'] as int? ?? 0;
+    if (stock <= 0) {
+      return;
+    }
+
+    final index = _cartItems.indexWhere(
+      (item) => item.product['id'] == product['id'],
+    );
+
+    if (index >= 0) {
+      if (_cartItems[index].quantity < stock) {
+        _cartItems[index].quantity += 1;
+      }
+    } else {
+      _cartItems.add(CartItem(product: product, quantity: 1));
+    }
+
     _emitUpdate();
   }
 
   void updateQuantity(String productId, int delta) {
-    final index = _cartItems.indexWhere((item) => item.product['id'] == productId);
+    final index = _cartItems.indexWhere(
+      (item) => item.product['id'] == productId,
+    );
     if (index >= 0) {
-      _cartItems[index].quantity += delta;
+      final stock = _cartItems[index].product['stock'] as int? ?? 0;
+      final nextQuantity = _cartItems[index].quantity + delta;
+
+      if (nextQuantity > stock) {
+        return;
+      }
+
+      _cartItems[index].quantity = nextQuantity;
       if (_cartItems[index].quantity <= 0) {
         _cartItems.removeAt(index);
       }
@@ -70,19 +95,56 @@ class CartCubit extends Cubit<CartState> {
     _emitUpdate();
   }
 
+  Future<void> processSale({String? customerName}) async {
+    if (state is! CartLoaded) {
+      throw StateError('Cart is not ready yet.');
+    }
+
+    final current = state as CartLoaded;
+    if (current.cartItems.isEmpty) {
+      throw StateError('Cart is empty. Add items before processing sale.');
+    }
+
+    final payloadItems = current.cartItems
+        .map(
+          (item) => {
+            'productId': item.product['id'],
+            'name': item.product['name'],
+            'sku': item.product['sku'],
+            'unitPrice': item.product['price'],
+            'quantity': item.quantity,
+            'lineTotal': item.totalPrice,
+          },
+        )
+        .toList();
+
+    await _salesRepository.createSale(
+      items: payloadItems,
+      subtotal: current.subtotal,
+      tax: current.tax,
+      surcharge: current.surcharge,
+      total: current.total,
+      customerName: customerName,
+    );
+
+    await loadPosData();
+  }
+
   void _emitUpdate() {
     double subtotal = _cartItems.fold(0, (sum, item) => sum + item.totalPrice);
-    double tax = subtotal * 0.08; // 8% tax from image
-    double surcharge = 25.00; // Fixed surcharge from image
-    double total = subtotal + tax + surcharge;
+    double tax = 0;
+    double surcharge = 0;
+    double total = subtotal;
 
-    emit(CartLoaded(
-      products: _mockProducts,
-      cartItems: List.from(_cartItems), // Clone to trigger state update
-      subtotal: subtotal,
-      tax: tax,
-      surcharge: surcharge,
-      total: total,
-    ));
+    emit(
+      CartLoaded(
+        products: List.from(_products),
+        cartItems: List.from(_cartItems),
+        subtotal: subtotal,
+        tax: tax,
+        surcharge: surcharge,
+        total: total,
+      ),
+    );
   }
 }

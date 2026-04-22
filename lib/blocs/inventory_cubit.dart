@@ -1,37 +1,79 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
+import '../repositories/inventory_repository.dart';
 
 abstract class InventoryState {}
+
 class InventoryLoading extends InventoryState {}
+
 class InventoryLoaded extends InventoryState {
   final List<Map<String, dynamic>> products;
-  InventoryLoaded(this.products);
+  final List<String> categories;
+
+  InventoryLoaded(this.products, this.categories);
+}
+
+class InventoryError extends InventoryState {
+  final String message;
+  InventoryError(this.message);
 }
 
 class InventoryCubit extends Cubit<InventoryState> {
-  InventoryCubit() : super(InventoryLoading());
+  final InventoryRepository _repository;
 
-  void loadInventory() async {
+  InventoryCubit({InventoryRepository? repository})
+    : _repository = repository ?? InventoryRepository(),
+      super(InventoryLoading());
+
+  Future<void> loadInventory() async {
     emit(InventoryLoading());
-    await Future.delayed(const Duration(milliseconds: 600));
-    
-    final mockProducts = [
-      {
-        'name': 'GI Pipe - 2 Inch', 'sku': 'GI-200-STD', 'category': 'GI / Standard',
-        'purchase': 45.00, 'shop': 58.50, 'retail': 65.00, 'stock': 1240, 'maxStock': 2000, 'isLow': false
-      },
-      {
-        'name': 'UPVC Drainage Pipe', 'sku': 'UPVC-DR-110', 'category': 'UPVC / Premium',
-        'purchase': 12.20, 'shop': 15.50, 'retail': 18.99, 'stock': 450, 'maxStock': 1000, 'isLow': false
-      },
-      {
-        'name': 'PPR High Pressure 25mm', 'sku': 'PPR-HP-25', 'category': 'PPR / Premium',
-        'purchase': 8.75, 'shop': 11.20, 'retail': 12.50, 'stock': 2100, 'maxStock': 3000, 'isLow': false
-      },
-      {
-        'name': 'GI Elbow 90 Degree', 'sku': 'GI-EL-90', 'category': 'GI / Standard',
-        'purchase': 3.40, 'shop': 4.80, 'retail': 5.50, 'stock': 12, 'maxStock': 100, 'isLow': true
-      },
-    ];
-    emit(InventoryLoaded(mockProducts));
+    try {
+      final products = await _repository.fetchProducts();
+      final categories = await _repository.fetchCategories();
+      emit(InventoryLoaded(products, categories));
+    } catch (e) {
+      emit(InventoryError('Failed to load products: $e'));
+    }
+  }
+
+  Future<void> deleteProduct(String id) async {
+    try {
+      await _repository.deleteProduct(id);
+      await loadInventory();
+    } catch (e) {
+      emit(InventoryError('Failed to delete product: $e'));
+    }
+  }
+
+  Future<bool> addProduct(Map<String, dynamic> product) async {
+    try {
+      await _repository.addProduct(product);
+      await loadInventory();
+      return true;
+    } catch (e) {
+      emit(InventoryError('Failed to add product: $e'));
+      return false;
+    }
+  }
+
+  Future<bool> updateProduct(String id, Map<String, dynamic> product) async {
+    try {
+      await _repository.updateProduct(id, product);
+      await loadInventory();
+      return true;
+    } catch (e) {
+      emit(InventoryError('Failed to update product: $e'));
+      return false;
+    }
+  }
+
+  Future<bool> addCategory(String name) async {
+    try {
+      await _repository.addCategory(name);
+      await loadInventory();
+      return true;
+    } catch (e) {
+      emit(InventoryError('Failed to add category: $e'));
+      return false;
+    }
   }
 }

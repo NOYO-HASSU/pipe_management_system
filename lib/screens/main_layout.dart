@@ -12,6 +12,8 @@ import 'new_sale_screen.dart';
 import 'placeholder_screens.dart'; // We'll create this next
 
 class MainLayout extends StatelessWidget {
+  const MainLayout({super.key});
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -75,13 +77,13 @@ class MainLayout extends StatelessWidget {
               );
             },
           ),
-          const Spacer(),
-          IconButton(icon: const Icon(Icons.notifications_none), onPressed: () {}),
-          const SizedBox(width: 8),
-          const CircleAvatar(
-            backgroundColor: AppColors.primaryDark,
-            child: Icon(Icons.person, color: Colors.white, size: 20),
-          )
+          // const Spacer(),
+          // IconButton(icon: const Icon(Icons.notifications_none), onPressed: () {}),
+          // const SizedBox(width: 8),
+          // const CircleAvatar(
+          //   backgroundColor: AppColors.primaryDark,
+          //   child: Icon(Icons.person, color: Colors.white, size: 20),
+          // )
         ],
       ),
     );

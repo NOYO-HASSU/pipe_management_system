@@ -1,0 +1,16 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Flutter Web",
+      "request": "launch",
+      "type": "dart",
+      "flutterMode": "debug",
+      "program": "lib/main.dart",
+      "toolArgs": [
+        "--dart-define=SUPABASE_URL=https://akwbxjyubtqkxftbhnut.supabase.co",
+        "--dart-define=SUPABASE_ANON_KEY=sb_publishable_ctp5VTFJgeKcXs0Gs_gI9Q_RO0KPKzN"
+      ]
+    }
+  ]
+}

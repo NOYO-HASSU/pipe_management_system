@@ -3,8 +3,25 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import '../blocs/cart_cubit.dart';
 import '../core/colors.dart';
 
-class NewSaleScreen extends StatelessWidget {
+class NewSaleScreen extends StatefulWidget {
   const NewSaleScreen({super.key});
+
+  @override
+  State<NewSaleScreen> createState() => _NewSaleScreenState();
+}
+
+class _NewSaleScreenState extends State<NewSaleScreen> {
+  final TextEditingController _customerController = TextEditingController();
+  final TextEditingController _searchController = TextEditingController();
+  String _searchQuery = '';
+  bool _isProcessingSale = false;
+
+  @override
+  void dispose() {
+    _customerController.dispose();
+    _searchController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -14,8 +31,9 @@ class NewSaleScreen extends StatelessWidget {
         padding: const EdgeInsets.all(16.0),
         child: BlocBuilder<CartCubit, CartState>(
           builder: (context, state) {
-            if (state is CartLoading)
+            if (state is CartLoading) {
               return const Center(child: CircularProgressIndicator());
+            }
             if (state is CartLoaded) {
               return Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -40,6 +58,8 @@ class NewSaleScreen extends StatelessWidget {
   }
 
   Widget _buildProductSelectionPane(BuildContext context, CartLoaded state) {
+    final filteredProducts = _filterProducts(state.products);
+
     return Container(
       decoration: BoxDecoration(
         color: const Color(0xFFF9FAFB), // Very light gray from image
@@ -93,6 +113,12 @@ class NewSaleScreen extends StatelessWidget {
 
           // Search Bar
           TextField(
+            controller: _searchController,
+            onChanged: (value) {
+              setState(() {
+                _searchQuery = value.trim().toLowerCase();
+              });
+            },
             decoration: InputDecoration(
               hintText: "Search by pipe diameter, material, or SKU...",
               hintStyle: const TextStyle(fontSize: 12),
@@ -116,15 +142,37 @@ class NewSaleScreen extends StatelessWidget {
           // Product List
           Expanded(
             child: ListView.separated(
-              itemCount: state.products.length,
+              itemCount: filteredProducts.length,
               separatorBuilder: (_, __) => const SizedBox(height: 8),
-              itemBuilder: (context, index) =>
-                  _ProductListItem(product: state.products[index]),
+              itemBuilder: (context, index) => _ProductListItem(
+                product: filteredProducts[index],
+                onAdd: () {
+                  context.read<CartCubit>().addToCart(filteredProducts[index]);
+                },
+              ),
             ),
           ),
         ],
       ),
     );
+  }
+
+  List<Map<String, dynamic>> _filterProducts(
+    List<Map<String, dynamic>> products,
+  ) {
+    if (_searchQuery.isEmpty) {
+      return products;
+    }
+
+    return products.where((product) {
+      final name = (product['name'] ?? '').toString().toLowerCase();
+      final sku = (product['sku'] ?? '').toString().toLowerCase();
+      final stockStatus = (product['stockStatus'] ?? '').toString().toLowerCase();
+
+      return name.contains(_searchQuery) ||
+          sku.contains(_searchQuery) ||
+          stockStatus.contains(_searchQuery);
+    }).toList();
   }
 
   Widget _buildToggleButton(String text, bool isSelected) {
@@ -243,17 +291,7 @@ class NewSaleScreen extends StatelessWidget {
               children: [
                 _buildSummaryRow(
                   "Subtotal",
-                  "\$${state.subtotal.toStringAsFixed(2)}",
-                ),
-                const SizedBox(height: 8),
-                _buildSummaryRow(
-                  "Tax (8%)",
-                  "\$${state.tax.toStringAsFixed(2)}",
-                ),
-                const SizedBox(height: 8),
-                _buildSummaryRow(
-                  "Warehouse Surcharge",
-                  "\$${state.surcharge.toStringAsFixed(2)}",
+                  "RS ${state.subtotal.toStringAsFixed(2)}",
                 ),
                 const Padding(
                   padding: EdgeInsets.symmetric(vertical: 12),
@@ -270,7 +308,7 @@ class NewSaleScreen extends StatelessWidget {
                       ),
                     ),
                     Text(
-                      "\$${state.total.toStringAsFixed(2)}",
+                      "RS ${state.total.toStringAsFixed(2)}",
                       style: const TextStyle(
                         fontWeight: FontWeight.bold,
                         fontSize: 20,
@@ -282,6 +320,7 @@ class NewSaleScreen extends StatelessWidget {
 
                 // Customer Assignment Input
                 TextField(
+                  controller: _customerController,
                   decoration: InputDecoration(
                     hintText: "Assign customer...",
                     hintStyle: const TextStyle(fontSize: 12),
@@ -302,7 +341,9 @@ class NewSaleScreen extends StatelessWidget {
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton(
-                    onPressed: () {},
+                    onPressed: _isProcessingSale
+                        ? null
+                        : () => _confirmAndProcessSale(context),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: AppColors.primaryDark,
                       padding: const EdgeInsets.symmetric(vertical: 14),
@@ -312,17 +353,19 @@ class NewSaleScreen extends StatelessWidget {
                     ),
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.center,
-                      children: const [
+                      children: [
                         Text(
-                          "Confirm & Process Sale",
-                          style: TextStyle(
+                          _isProcessingSale
+                              ? "Processing Sale..."
+                              : "Confirm & Process Sale",
+                          style: const TextStyle(
                             color: Colors.white,
                             fontSize: 14,
                             fontWeight: FontWeight.bold,
                           ),
                         ),
-                        SizedBox(width: 6),
-                        Icon(
+                        const SizedBox(width: 6),
+                        const Icon(
                           Icons.arrow_forward,
                           color: Colors.white,
                           size: 16,
@@ -372,13 +415,49 @@ class NewSaleScreen extends StatelessWidget {
       ],
     );
   }
+
+  Future<void> _confirmAndProcessSale(BuildContext scopedContext) async {
+    setState(() {
+      _isProcessingSale = true;
+    });
+
+    try {
+      await scopedContext.read<CartCubit>().processSale(
+        customerName: _customerController.text.trim(),
+      );
+
+      if (!scopedContext.mounted || !mounted) {
+        return;
+      }
+
+      _customerController.clear();
+      ScaffoldMessenger.of(scopedContext).showSnackBar(
+        const SnackBar(content: Text('Sale processed successfully.')),
+      );
+    } catch (e) {
+      if (!scopedContext.mounted || !mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(
+        scopedContext,
+      ).showSnackBar(SnackBar(content: Text('Could not process sale: $e')));
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isProcessingSale = false;
+        });
+      }
+    }
+  }
 }
 
 // --- Helper Widgets ---
 
 class _ProductListItem extends StatelessWidget {
   final Map<String, dynamic> product;
-  const _ProductListItem({required this.product});
+  final VoidCallback onAdd;
+
+  const _ProductListItem({required this.product, required this.onAdd});
 
   @override
   Widget build(BuildContext context) {
@@ -434,7 +513,7 @@ class _ProductListItem extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
               Text(
-                "\$${product['price'].toStringAsFixed(2)} / unit",
+                "RS ${product['price'].toStringAsFixed(2)} / unit",
                 style: const TextStyle(
                   fontWeight: FontWeight.bold,
                   fontSize: 12,
@@ -483,6 +562,21 @@ class _ProductListItem extends StatelessWidget {
                   ],
                 ),
               ),
+              const SizedBox(height: 6),
+              SizedBox(
+                height: 28,
+                child: ElevatedButton(
+                  onPressed: isOutOfStock ? null : onAdd,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.primaryDark,
+                    padding: const EdgeInsets.symmetric(horizontal: 10),
+                  ),
+                  child: const Text(
+                    'Add',
+                    style: TextStyle(fontSize: 11, color: Colors.white),
+                  ),
+                ),
+              ),
             ],
           ),
         ],
@@ -513,7 +607,7 @@ class _CartListItem extends StatelessWidget {
               ),
               const SizedBox(height: 2),
               Text(
-                "Retail Price: \$${item.product['price'].toStringAsFixed(2)}",
+                "Retail Price: RS ${item.product['price'].toStringAsFixed(2)}",
                 style: const TextStyle(
                   color: AppColors.textSecondary,
                   fontSize: 10,
@@ -601,7 +695,7 @@ class _CartListItem extends StatelessWidget {
           ),
         ),
         Text(
-          "\$${item.totalPrice.toStringAsFixed(2)}",
+          "RS ${item.totalPrice.toStringAsFixed(2)}",
           style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
         ),
       ],
