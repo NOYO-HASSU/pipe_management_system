@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:pdf/pdf.dart';
-import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
+import 'dart:typed_data';
 
 import '../core/colors.dart';
+import '../modules/invoice/invoice_download_service.dart';
+import '../modules/invoice/sale_invoice_pdf_builder.dart';
 import '../repositories/sales_repository.dart';
 
 class SaleReceiptDialog extends StatefulWidget {
@@ -29,7 +30,9 @@ class SaleReceiptDialog extends StatefulWidget {
 class _SaleReceiptDialogState extends State<SaleReceiptDialog> {
   final SalesRepository _salesRepository = SalesRepository();
   bool _isPrinting = false;
+  bool _isDownloading = false;
   bool _isVoiding = false;
+  Uint8List? _cachedInvoiceBytes;
 
   Map<String, dynamic> get sale => widget.sale;
 
@@ -42,8 +45,8 @@ class _SaleReceiptDialogState extends State<SaleReceiptDialog> {
     final createdAt = _formatDateTime(sale['createdAt']?.toString());
     final total = _toDouble(sale['total']);
     final subtotal = _toDouble(sale['subtotal']);
-    final tax = _toDouble(sale['tax']);
-    final surcharge = _toDouble(sale['surcharge']);
+    // final tax = _toDouble(sale['tax']);
+    // final surcharge = _toDouble(sale['surcharge']);
     final content = SizedBox(
       width: 860,
       child: Column(
@@ -251,14 +254,14 @@ class _SaleReceiptDialogState extends State<SaleReceiptDialog> {
                       ),
                       const SizedBox(height: 12),
                       _summaryRow('Subtotal', 'RS ${_formatMoney(subtotal)}'),
-                      const SizedBox(height: 10),
-                      _summaryRow('Tax (0%)', 'RS ${_formatMoney(tax)}'),
-                      const SizedBox(height: 10),
-                      _summaryRow('Surcharge', 'RS ${_formatMoney(surcharge)}'),
-                      const Divider(height: 28, color: Colors.white12),
+                      // const SizedBox(height: 10),
+                      // _summaryRow('Tax (0%)', 'RS ${_formatMoney(tax)}'),
+                      // const SizedBox(height: 10),
+                      // _summaryRow('Surcharge', 'RS ${_formatMoney(surcharge)}'),
+                      // const Divider(height: 28, color: Colors.white12),
                       _summaryRow(
                         'Total',
-                        'RS ${_formatMoney(total)}',
+                        ' ${_formatMoney(total)}',
                         emphasize: true,
                       ),
                     ],
@@ -268,6 +271,28 @@ class _SaleReceiptDialogState extends State<SaleReceiptDialog> {
                 final actionColumn = Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
+                    ElevatedButton.icon(
+                      onPressed: _isDownloading ? null : _downloadInvoice,
+                      icon: _isDownloading
+                          ? const SizedBox(
+                              width: 14,
+                              height: 14,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.download, size: 18),
+                      label: Text(
+                        _isDownloading ? 'Downloading...' : 'Download Invoice',
+                      ),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFFEEF2FF),
+                        foregroundColor: AppColors.textPrimary,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
                     ElevatedButton.icon(
                       onPressed: _isPrinting ? null : _printReceipt,
                       icon: _isPrinting
@@ -409,8 +434,30 @@ class _SaleReceiptDialogState extends State<SaleReceiptDialog> {
     });
 
     try {
-      final pdf = await _buildPdf();
-      await Printing.layoutPdf(onLayout: (_) async => pdf.save());
+      final bytes = await _getInvoiceBytes();
+      await Printing.layoutPdf(onLayout: (_) async => bytes);
+    } catch (_) {
+      try {
+        final bytes = await _getInvoiceBytes();
+        await downloadInvoicePdf(bytes: bytes, fileName: _invoiceFileName());
+        if (!mounted) {
+          return;
+        }
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Print preview unavailable. Invoice downloaded instead.',
+            ),
+          ),
+        );
+      } catch (e) {
+        if (!mounted) {
+          return;
+        }
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Could not print invoice: $e')));
+      }
     } finally {
       if (mounted) {
         setState(() {
@@ -418,6 +465,59 @@ class _SaleReceiptDialogState extends State<SaleReceiptDialog> {
         });
       }
     }
+  }
+
+  Future<void> _downloadInvoice() async {
+    setState(() {
+      _isDownloading = true;
+    });
+
+    try {
+      final bytes = await _getInvoiceBytes();
+      await downloadInvoicePdf(bytes: bytes, fileName: _invoiceFileName());
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Invoice downloaded.')));
+    } catch (_) {
+      try {
+        final bytes = await _getInvoiceBytes();
+        await Printing.layoutPdf(onLayout: (_) async => bytes);
+        if (!mounted) {
+          return;
+        }
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Direct download failed. Opened print/save preview.'),
+          ),
+        );
+      } catch (e) {
+        if (!mounted) {
+          return;
+        }
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not download invoice: $e')),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isDownloading = false;
+        });
+      }
+    }
+  }
+
+  Future<Uint8List> _getInvoiceBytes() async {
+    if (_cachedInvoiceBytes != null) {
+      return _cachedInvoiceBytes!;
+    }
+
+    final generated = await SaleInvoicePdfBuilder.build(sale: sale);
+    _cachedInvoiceBytes = generated;
+    return generated;
   }
 
   Future<void> _confirmVoid() async {
@@ -479,79 +579,13 @@ class _SaleReceiptDialogState extends State<SaleReceiptDialog> {
     }
   }
 
-  Future<pw.Document> _buildPdf() async {
-    final doc = pw.Document();
-    final createdAt = _formatDateTime(sale['createdAt']?.toString());
-    final saleId = sale['id']?.toString() ?? '';
-    final customerName = sale['customerName']?.toString() ?? 'Walk-in Customer';
-    final subtotal = _toDouble(sale['subtotal']);
-    final tax = _toDouble(sale['tax']);
-    final surcharge = _toDouble(sale['surcharge']);
-    final total = _toDouble(sale['total']);
-
-    doc.addPage(
-      pw.Page(
-        pageFormat: PdfPageFormat.a4,
-        build: (context) {
-          return pw.Padding(
-            padding: const pw.EdgeInsets.all(24),
-            child: pw.Column(
-              crossAxisAlignment: pw.CrossAxisAlignment.start,
-              children: [
-                pw.Text(
-                  'M&M Group',
-                  style: pw.TextStyle(
-                    fontSize: 22,
-                    fontWeight: pw.FontWeight.bold,
-                  ),
-                ),
-                pw.SizedBox(height: 4),
-                pw.Text('Sales Receipt / Invoice'),
-                pw.SizedBox(height: 18),
-                pw.Text('Transaction ID: $saleId'),
-                pw.Text('Customer: $customerName'),
-                pw.Text('Date: $createdAt'),
-                pw.SizedBox(height: 18),
-                pw.TableHelper.fromTextArray(
-                  headers: const ['Item', 'SKU', 'Qty', 'Unit', 'Total'],
-                  data: details
-                      .map(
-                        (detail) => [
-                          detail['productName']?.toString() ??
-                              'Unnamed Product',
-                          detail['sku']?.toString() ?? '-',
-                          detail['quantity']?.toString() ?? '0',
-                          'RS ${_formatMoney(_toDouble(detail['unitPrice']))}',
-                          'RS ${_formatMoney(_toDouble(detail['lineTotal']))}',
-                        ],
-                      )
-                      .toList(),
-                ),
-                pw.SizedBox(height: 18),
-                pw.Align(
-                  alignment: pw.Alignment.centerRight,
-                  child: pw.Column(
-                    crossAxisAlignment: pw.CrossAxisAlignment.end,
-                    children: [
-                      pw.Text('Subtotal: RS ${_formatMoney(subtotal)}'),
-                      pw.Text('Tax: RS ${_formatMoney(tax)}'),
-                      pw.Text('Surcharge: RS ${_formatMoney(surcharge)}'),
-                      pw.SizedBox(height: 8),
-                      pw.Text(
-                        'Total: RS ${_formatMoney(total)}',
-                        style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          );
-        },
-      ),
-    );
-
-    return doc;
+  String _invoiceFileName() {
+    final saleId = sale['id']?.toString() ?? 'sale';
+    final safeId = saleId.replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '');
+    final shortId = safeId.isEmpty
+        ? 'sale'
+        : (safeId.length > 8 ? safeId.substring(0, 8) : safeId);
+    return 'invoice_$shortId.pdf';
   }
 
   String _initials(String? value) {
