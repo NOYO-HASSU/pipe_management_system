@@ -23,11 +23,11 @@ Future<void> main() async {
   final supabaseUrl = definedSupabaseUrl.isNotEmpty
       ? definedSupabaseUrl
       : (dotenv.env['SUPABASE_URL'] ??
-            'https://akwbxjyubtqkxftbhnut.supabase.co');
+            '');
   final supabaseAnonKey = definedSupabaseAnonKey.isNotEmpty
       ? definedSupabaseAnonKey
       : (dotenv.env['SUPABASE_ANON_KEY'] ??
-            'sb_publishable_ctp5VTFJgeKcXs0Gs_gI9Q_RO0KPKzN');
+            '');
 
   await Supabase.initialize(url: supabaseUrl, anonKey: supabaseAnonKey);
 
